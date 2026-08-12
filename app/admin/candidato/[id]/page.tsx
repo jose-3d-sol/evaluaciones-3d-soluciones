@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { clasificar } from '@/lib/tipos';
+import { AdminGate } from '@/lib/auth';
 
-export default function DetalleCandidato({ params }: { params: { id: string } }) {
+function DetalleCandidatoInner({ params }: { params: { id: string } }) {
   const [candidato, setCandidato] = useState<any>(null);
   const [empresa, setEmpresa] = useState<any>(null);
   const [bloques, setBloques] = useState<any[]>([]);
@@ -118,32 +119,61 @@ export default function DetalleCandidato({ params }: { params: { id: string } })
 
   const exportarPDFCompleto = async (intento: any) => {
     const { default: jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
     const detalle = intento.respuestas?.detalle || [];
+    const errores = detalle.filter((d: any) => !d.acertada);
     let y = 20;
+
+    // ===== RESUMEN =====
     doc.setFontSize(18); doc.setTextColor(30, 64, 175); doc.text('3D Soluciones Electricas', 14, y); y += 8;
     doc.setFontSize(12); doc.setTextColor(80); doc.text('Retroalimentacion de Evaluacion', 14, y); y += 10;
     doc.setFontSize(10); doc.setTextColor(0);
     doc.text(`Empresa: ${empresa?.nombre || '-'}`, 14, y); y += 6;
     doc.text(`Candidato: ${candidato.nombre}`, 14, y); y += 6;
     doc.text(`Fecha: ${new Date(intento.fecha).toLocaleString('es')}`, 14, y); y += 6;
-    doc.text(`Score: ${intento.score_total}%  -  ${intento.clasificacion}`, 14, y); y += 10;
+    doc.setFontSize(11); doc.setTextColor(30, 64, 175);
+    doc.text(`Puntaje: ${intento.score_total}%   -   ${intento.clasificacion}`, 14, y); y += 8;
+
+    // Tabla desempeno por bloque de este intento
+    const nb = intento.notas_por_bloque || {};
+    const filas = Object.keys(nb).map(b => [b, `${nb[b]}%`]);
+    if (filas.length > 0) {
+      autoTable(doc, { startY: y, head: [['Bloque evaluado', 'Nota']], body: filas, headStyles: { fillColor: [37, 99, 235] }, styles: { fontSize: 9 } });
+      y = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Resumen de aciertos
+    doc.setFontSize(10); doc.setTextColor(0);
+    const totalP = detalle.length; const correctas = totalP - errores.length;
+    doc.text(`Respuestas correctas: ${correctas} de ${totalP}`, 14, y); y += 10;
+
+    // ===== SOLO PREGUNTAS EQUIVOCADAS =====
+    doc.setFontSize(13); doc.setTextColor(220, 38, 38);
+    doc.text('Preguntas a reforzar', 14, y); y += 8;
+
     const addText = (text: string, x: number, fs: number, color: number[], maxW: number) => {
       doc.setFontSize(fs); doc.setTextColor(color[0], color[1], color[2]);
       doc.splitTextToSize(text, maxW).forEach((ln: string) => {
         if (y > 278) { doc.addPage(); y = 20; } doc.text(ln, x, y); y += fs * 0.5;
       });
     };
-    detalle.forEach((d: any, i: number) => {
-      if (y > 255) { doc.addPage(); y = 20; } y += 3;
-      addText(`${i + 1}. [${d.bloque}] ${d.acertada ? 'Correcta' : 'Incorrecta'}`, 16, 10, d.acertada ? [22, 163, 74] : [220, 38, 38], 178);
-      addText(d.pregunta, 16, 9, [40, 40, 40], 178);
-      const tu = d.tu_respuesta ? `${d.tu_respuesta}) ${d.opciones[d.tu_respuesta]}` : '(sin responder)';
-      addText(`Tu respuesta: ${tu}`, 16, 8, [80, 80, 80], 178);
-      if (!d.acertada) addText(`Respuesta correcta: ${d.correcta}) ${d.opciones[d.correcta]}`, 16, 8, [22, 120, 74], 178);
-      if (d.justificacion) addText(`Justificacion: ${d.justificacion}`, 16, 8, [110, 110, 110], 178);
-      y += 4;
-    });
+
+    if (errores.length === 0) {
+      doc.setFontSize(11); doc.setTextColor(22, 163, 74);
+      doc.text('Excelente: no hubo respuestas incorrectas en esta prueba.', 14, y);
+    } else {
+      errores.forEach((d: any, i: number) => {
+        if (y > 250) { doc.addPage(); y = 20; } y += 3;
+        addText(`${i + 1}. [${d.bloque}]`, 16, 10, [40, 40, 40], 178);
+        addText(d.pregunta, 16, 9, [40, 40, 40], 178);
+        const tu = d.tu_respuesta ? `${d.tu_respuesta}) ${d.opciones[d.tu_respuesta]}` : '(sin responder)';
+        addText(`Tu respuesta: ${tu}`, 16, 8, [180, 60, 60], 178);
+        addText(`Respuesta correcta: ${d.correcta}) ${d.opciones[d.correcta]}`, 16, 8, [22, 120, 74], 178);
+        if (d.justificacion) addText(`Justificacion: ${d.justificacion}`, 16, 8, [110, 110, 110], 178);
+        y += 4;
+      });
+    }
     doc.save(`Retroalimentacion_${candidato.nombre.replace(/\s/g, '_')}.pdf`);
   };
 
@@ -280,4 +310,9 @@ export default function DetalleCandidato({ params }: { params: { id: string } })
       </div>
     </div>
   );
+}
+
+
+export default function DetalleCandidato({ params }: { params: { id: string } }) {
+  return <AdminGate><DetalleCandidatoInner params={params} /></AdminGate>;
 }

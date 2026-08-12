@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { AdminGate } from '@/lib/auth';
 
-export default function GestionEmpresa({ params }: { params: { id: string } }) {
+function GestionEmpresaInner({ params }: { params: { id: string } }) {
   const [empresa, setEmpresa] = useState<any>(null);
   const [candidatos, setCandidatos] = useState<any[]>([]);
   const [bloques, setBloques] = useState<any[]>([]);
@@ -195,4 +196,9 @@ export default function GestionEmpresa({ params }: { params: { id: string } }) {
       )}
     </div>
   );
+}
+
+
+export default function GestionEmpresa({ params }: { params: { id: string } }) {
+  return <AdminGate><GestionEmpresaInner params={params} /></AdminGate>;
 }

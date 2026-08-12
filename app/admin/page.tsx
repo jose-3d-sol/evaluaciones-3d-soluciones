@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { AdminGate } from '@/lib/auth';
 
-export default function AdminEmpresas() {
+function AdminEmpresasInner() {
   const [empresas, setEmpresas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [nombre, setNombre] = useState('');
@@ -105,4 +106,9 @@ export default function AdminEmpresas() {
       </div>
     </div>
   );
+}
+
+
+export default function AdminEmpresas() {
+  return <AdminGate><AdminEmpresasInner /></AdminGate>;
 }

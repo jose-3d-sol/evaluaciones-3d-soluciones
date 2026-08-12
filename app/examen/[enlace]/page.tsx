@@ -47,11 +47,28 @@ export default function ExamenPage({ params }: { params: { enlace: string } }) {
   const iniciarExamen = async () => {
     setLoading(true);
     const config = asignacion.bloques_config || [];
+
+    // Anti-repeticion: reunir IDs de preguntas que este candidato ya vio en intentos previos
+    const { data: intentosPrevios } = await supabase.from('exam_attempts')
+      .select('preguntas_ids').eq('candidate_id', asignacion.candidate_id);
+    const yaVistas = new Set<number>();
+    (intentosPrevios || []).forEach((it: any) => (it.preguntas_ids || []).forEach((id: number) => yaVistas.add(id)));
+
     let seleccionadas: any[] = [];
     for (const cfg of config) {
       const { data: pb } = await supabase.from('preguntas').select('*')
         .eq('empresa_id', asignacion.empresa_id).eq('bloque_nombre', cfg.bloque_nombre);
-      if (pb && pb.length > 0) seleccionadas = [...seleccionadas, ...seleccionarBalanceado(pb, cfg.cantidad)];
+      if (pb && pb.length > 0) {
+        // Preferir preguntas NO vistas; si no alcanzan, completar con vistas
+        const noVistas = pb.filter((p: any) => !yaVistas.has(p.id));
+        const vistas = pb.filter((p: any) => yaVistas.has(p.id));
+        let pool = noVistas;
+        if (noVistas.length < cfg.cantidad) {
+          // No hay suficientes nuevas: usar todas las nuevas + rellenar con vistas al azar
+          pool = [...noVistas, ...vistas.sort(() => Math.random() - 0.5)];
+        }
+        seleccionadas = [...seleccionadas, ...seleccionarBalanceado(pool, cfg.cantidad)];
+      }
     }
     if (seleccionadas.length === 0) { setError('No hay preguntas disponibles. Contacta al administrador.'); setLoading(false); return; }
     setPreguntas(seleccionadas); setIniciado(true); setLoading(false);
