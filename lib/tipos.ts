@@ -1,20 +1,4 @@
-export interface Bloque {
-  id: number;
-  nombre: string;
-  peso: number;
-}
-
-export const BLOQUES: Bloque[] = [
-  { id: 1, nombre: 'Diagnóstico Eléctrico', peso: 30 },
-  { id: 2, nombre: 'Sistemas de Enfriamiento', peso: 10 },
-  { id: 3, nombre: 'Bushings', peso: 10 },
-  { id: 4, nombre: 'Protección y Fusibles', peso: 10 },
-  { id: 5, nombre: 'Tap Changers y Switches', peso: 10 },
-  { id: 6, nombre: 'Instrumentación e Indicadores', peso: 10 },
-  { id: 7, nombre: 'Manejo y Tratamiento de Aceite', peso: 15 },
-  { id: 8, nombre: 'Reparaciones Mecánicas y Estructurales', peso: 5 },
-];
-
+// Niveles de certificación (globales)
 export interface NivelCertificacion {
   nivel: number;
   titulo: string;
@@ -40,15 +24,17 @@ export function clasificar(score: number): string {
   return 'No Certificado';
 }
 
-// Mapea nombre de bloque a su peso oficial (los datos usan bloque_nombre confiable)
-export function pesoPorNombre(nombre: string): number {
-  const b = BLOQUES.find(x => x.nombre === nombre);
-  return b ? b.peso : 10;
+export interface Bloque {
+  id: string;
+  empresa_id: string;
+  nombre: string;
+  peso: number;
+  orden: number;
 }
 
 export interface Pregunta {
   id: number;
-  bloque_id: number;
+  empresa_id: string;
   bloque_nombre: string;
   bloque_peso: number;
   pregunta: string;
@@ -56,4 +42,10 @@ export interface Pregunta {
   respuesta_correcta: string;
   nivel: string;
   justificacion: string;
+}
+
+export interface Empresa {
+  id: string;
+  nombre: string;
+  contacto: string;
 }
