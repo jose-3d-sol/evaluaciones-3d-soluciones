@@ -4,18 +4,52 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { clasificar } from '@/lib/tipos';
 
-function seleccionarBalanceado(preguntas: any[], cantidad: number): any[] {
-  const porNivel: Record<string, any[]> = { 'BÁSICO': [], 'INTERMEDIO': [], 'AVANZADO': [] };
-  preguntas.forEach(p => { const n = (p.nivel || '').toUpperCase(); if (porNivel[n]) porNivel[n].push(p); });
-  const mezclar = (a: any[]) => a.sort(() => Math.random() - 0.5);
-  Object.keys(porNivel).forEach(k => mezclar(porNivel[k]));
-  const nB = Math.round(cantidad * 0.40), nI = Math.round(cantidad * 0.35), nA = cantidad - nB - nI;
-  let sel = [...porNivel['BÁSICO'].slice(0, nB), ...porNivel['INTERMEDIO'].slice(0, nI), ...porNivel['AVANZADO'].slice(0, nA)];
-  if (sel.length < cantidad) {
-    const usados = new Set(sel.map(p => p.id));
-    sel = [...sel, ...mezclar(preguntas.filter(p => !usados.has(p.id))).slice(0, cantidad - sel.length)];
+const mezclar = (a: any[]) => a.slice().sort(() => Math.random() - 0.5);
+
+// Proporciones objetivo por nivel
+const PROP = { 'BÁSICO': 0.35, 'INTERMEDIO': 0.35, 'AVANZADO': 0.30 };
+
+// Selección balanceada 35/35/30 con reparto justo.
+// Recibe pools por nivel ya priorizados (no vistas primero) y arma el examen.
+// Devuelve { seleccionadas, faltoBalance } — faltoBalance=true si no se pudo cumplir la mezcla.
+function seleccionarBalanceado(porNivelPool: Record<string, any[]>, cantidad: number): { seleccionadas: any[]; faltoBalance: boolean } {
+  const niveles = ['BÁSICO', 'INTERMEDIO', 'AVANZADO'];
+  // Cupo ideal por nivel
+  const cupo: Record<string, number> = {
+    'BÁSICO': Math.round(cantidad * PROP['BÁSICO']),
+    'INTERMEDIO': Math.round(cantidad * PROP['INTERMEDIO']),
+    'AVANZADO': 0,
+  };
+  cupo['AVANZADO'] = cantidad - cupo['BÁSICO'] - cupo['INTERMEDIO'];
+
+  const disponibles: Record<string, number> = {};
+  niveles.forEach(n => { disponibles[n] = (porNivelPool[n] || []).length; });
+
+  // Tomar lo que se pueda de cada nivel según su cupo
+  const tomar: Record<string, number> = {};
+  let faltoBalance = false;
+  niveles.forEach(n => {
+    tomar[n] = Math.min(cupo[n], disponibles[n]);
+    if (tomar[n] < cupo[n]) faltoBalance = true;
+  });
+
+  // Redistribuir el faltante a los niveles que aún tengan preguntas
+  let faltante = cantidad - (tomar['BÁSICO'] + tomar['INTERMEDIO'] + tomar['AVANZADO']);
+  while (faltante > 0) {
+    // ¿Algún nivel tiene margen (disponibles > tomadas)?
+    const conMargen = niveles.filter(n => disponibles[n] - tomar[n] > 0);
+    if (conMargen.length === 0) break; // no hay más preguntas en ningún nivel
+    // Repartir de forma equilibrada: al que menos proporción lleve
+    conMargen.sort((a, b) => (tomar[a] / cupo[a || 1] || 0) - (tomar[b] / cupo[b || 1] || 0));
+    tomar[conMargen[0]]++;
+    faltante--;
   }
-  return mezclar(sel);
+
+  let seleccionadas: any[] = [];
+  niveles.forEach(n => {
+    seleccionadas = [...seleccionadas, ...(porNivelPool[n] || []).slice(0, tomar[n])];
+  });
+  return { seleccionadas: mezclar(seleccionadas), faltoBalance };
 }
 
 export default function ExamenPage({ params }: { params: { enlace: string } }) {
@@ -48,29 +82,40 @@ export default function ExamenPage({ params }: { params: { enlace: string } }) {
     setLoading(true);
     const config = asignacion.bloques_config || [];
 
-    // Anti-repeticion: reunir IDs de preguntas que este candidato ya vio en intentos previos
+    // Anti-repeticion: IDs que este candidato ya vio en intentos previos
     const { data: intentosPrevios } = await supabase.from('exam_attempts')
       .select('preguntas_ids').eq('candidate_id', asignacion.candidate_id);
     const yaVistas = new Set<number>();
     (intentosPrevios || []).forEach((it: any) => (it.preguntas_ids || []).forEach((id: number) => yaVistas.add(id)));
 
+    const nivelDe = (p: any) => (p.nivel || '').toUpperCase();
     let seleccionadas: any[] = [];
+    const avisos: string[] = [];
+
     for (const cfg of config) {
       const { data: pb } = await supabase.from('preguntas').select('*')
         .eq('empresa_id', asignacion.empresa_id).eq('bloque_nombre', cfg.bloque_nombre);
-      if (pb && pb.length > 0) {
-        // Preferir preguntas NO vistas; si no alcanzan, completar con vistas
-        const noVistas = pb.filter((p: any) => !yaVistas.has(p.id));
-        const vistas = pb.filter((p: any) => yaVistas.has(p.id));
-        let pool = noVistas;
-        if (noVistas.length < cfg.cantidad) {
-          // No hay suficientes nuevas: usar todas las nuevas + rellenar con vistas al azar
-          pool = [...noVistas, ...vistas.sort(() => Math.random() - 0.5)];
-        }
-        seleccionadas = [...seleccionadas, ...seleccionarBalanceado(pool, cfg.cantidad)];
-      }
+      if (!pb || pb.length === 0) continue;
+
+      // Construir pool por nivel priorizando NO vistas dentro de cada nivel.
+      // El BALANCE manda: primero armamos con no-vistas por nivel; si a un nivel
+      // le faltan, completamos ESE nivel con vistas del mismo nivel (mantiene la mezcla).
+      const porNivelPool: Record<string, any[]> = { 'BÁSICO': [], 'INTERMEDIO': [], 'AVANZADO': [] };
+      ['BÁSICO', 'INTERMEDIO', 'AVANZADO'].forEach(niv => {
+        const delNivel = pb.filter((p: any) => nivelDe(p) === niv);
+        const noVistas = mezclar(delNivel.filter((p: any) => !yaVistas.has(p.id)));
+        const vistas = mezclar(delNivel.filter((p: any) => yaVistas.has(p.id)));
+        porNivelPool[niv] = [...noVistas, ...vistas]; // no-vistas primero, luego vistas si hace falta
+      });
+
+      const { seleccionadas: sel, faltoBalance } = seleccionarBalanceado(porNivelPool, cfg.cantidad);
+      if (faltoBalance) avisos.push(cfg.bloque_nombre);
+      seleccionadas = [...seleccionadas, ...sel];
     }
+
     if (seleccionadas.length === 0) { setError('No hay preguntas disponibles. Contacta al administrador.'); setLoading(false); return; }
+    // Aviso discreto en consola para el admin (no bloquea al candidato)
+    if (avisos.length > 0) console.warn('Balance no ideal por falta de preguntas en:', avisos.join(', '));
     setPreguntas(seleccionadas); setIniciado(true); setLoading(false);
   };
 
